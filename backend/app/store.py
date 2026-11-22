@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.domain_seed import bootstrap
 from app.seed import SEED_ROWS
 
 
@@ -14,9 +15,11 @@ class Store:
         self._tables: dict[str, list[dict[str, Any]]] = {
             name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
         }
+        bootstrap(self)
 
     def module_names(self) -> list[str]:
-        return sorted(self._tables)
+        # 下划线开头的是领域内部表（样本、版本快照、缓存条目等），不对外暴露成业务模块。
+        return sorted(name for name in self._tables if not name.startswith("_"))
 
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])

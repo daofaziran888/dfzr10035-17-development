@@ -16,8 +16,11 @@
 │   └── vite.config.ts        dev server 配置（open: false）
 ├── backend/                  FastAPI（Python） 后端
 │   ├── app/routers/resource.py  通用查询/导出/登记/动作接口
+│   ├── app/routers/imports.py   字段映射文件导入/确认/更正/交付回查接口
 │   ├── app/services/<key>.py    每个模块独立领域逻辑
+│   ├── app/services/parse_import.py  字段映射导入领域逻辑
 │   ├── app/services/base.py     共享服务骨架
+│   ├── app/domain_seed.py       样本、历史映射版本、旧缓存与旧任务种子
 │   └── app/store.py          内存数据仓库与示例数据
 ├── .gitignore
 └── docker-compose.yml
@@ -83,3 +86,41 @@ npm run dev
 
 领域：数据工程
 子方向：数据采集、爬虫与RPA
+
+## 响应解析：字段映射文件导入
+
+响应解析模块（`/response_parse` 页面底部）支持从同一端点的字段映射文件导入解析配置，
+不再需要逐条登记规则。链路如下：
+
+```text
+上传映射文件 → 同端点响应样本预检 → 确认启效 → 刷新结果缓存 → 同步投递待办 → 实际投递取列
+                     ↓ 同名冲突
+              保留全部路径与样本原值 → 人工更正 → 产出新映射版本
+```
+
+- 映射文件支持 JSON（`{"endpoint": "...", "mappings": [{"field","path","type","default"}]}`）
+  或 CSV（`field,path,type,default`，可用 `#endpoint: ENDP-...` 声明端点）。
+- 预检只使用同一端点的响应样本核对；路径不存在、类型不符都记为“未验证”，
+  未验证字段不会覆盖已生效定义。
+- 同名冲突（例如 `$.gross` 与 `$.net` 同时映射到 `total`）保留两个路径与样本原值，
+  冲突处理结论记录在 `schema_diff` 与冲突记录里，可由交付版本回查。
+- 每次启效生成不可变的映射版本与缓存条目；历史任务只使用领用时领用的快照，
+  不受后续确认/更正影响。
+- 同一文件重复提交只登记一次，也只会启效一次；确认中断后重提同一文件从断点恢复，
+  并重新核对已确认范围。
+
+主要接口（服务启动后可直接调用）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/parse-imports/state` | 样本、导入、映射版本、缓存、待办、冲突、交付对比 |
+| POST | `/api/parse-imports/upload` | 上传映射文件并预检 |
+| POST | `/api/parse-imports/{id}/confirm` | 确认启效（`interrupt_after` 可模拟中断） |
+| POST | `/api/parse-imports/{id}/conflicts/{cid}/resolve` | 更正同名冲突 |
+| POST | `/api/parse-imports/deliveries/run` | 按缓存结果运行一笔投递 |
+| GET | `/api/parse-imports/deliveries/{id}` | 回查交付使用的字段来源与冲突结论 |
+| GET | `/api/parse-imports/deliveries/compare` | 比较各交付的字段来源 |
+
+种子数据：`ENDP-CSV-0001` 的响应样本为 `{"gross":100,"net":80,"currency":"CNY"}`，
+旧任务 `TASK-CSV-LEGACY-01` 领用的是 `total <- $.gross`（版本 1），
+旧缓存 `CACHE-CSV-V1` 仍在服务该任务。
